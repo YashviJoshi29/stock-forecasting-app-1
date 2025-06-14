@@ -1,7 +1,10 @@
-import pandas as pd
+# Test script: Train and evaluate forecasting model
 import sys
-from forecasting.model import ForecastingModel
-from forecasting.test_feature_engineering import final_df
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+import pandas as pd
+from src.forecasting.model import ForecastingModel
+from src.forecasting.test_feature_engineering import final_df
 
 # --- Robust missing data handling (consistent with feature engineering pipeline) ---
 # Merge duplicate date columns into a single 'Date' column for clarity
@@ -33,20 +36,24 @@ features = [col for col in final_df.columns if col not in ['Date', 'date', 'scor
 target = 'Return'
 data = final_df.dropna(subset=features + [target])
 
+X = data[features]
+y = data[target]
+
+# Simple train/test split
+split_idx = int(len(X) * 0.8)
+X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
+y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+
+# Train and evaluate model
 try:
-    X = data[features]
-    y = data[target]
-    split_idx = int(len(X) * 0.8)
-    X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-    y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
     model = ForecastingModel()
     model.train_model(X_train, y_train)
     results = model.evaluate_model(X_test, y_test)
-    print("Model Evaluation:")
-    print(results)
+    print("Model evaluation:", results)
+
+    # Predict and show sample
     preds = model.predict(X_test)
-    print("Sample Predictions vs Actual:")
+    print("\nSample predictions:")
     print(pd.DataFrame({'Actual': y_test, 'Predicted': preds}).head())
 except Exception as e:
     print(f"Error during modeling: {e}")
-    sys.exit(1)

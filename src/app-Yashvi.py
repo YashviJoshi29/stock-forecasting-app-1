@@ -1,5 +1,9 @@
-import streamlit as st
+import sys
 import os
+sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "src")))
+
+import streamlit as st
 from dotenv import load_dotenv
 import pandas as pd
 from data.fetch_stock_data import fetch_stock_prices
@@ -8,7 +12,6 @@ from sentiment.utils import clean_headlines
 from sentiment.analyzer import SentimentAnalyzer, FinBERTSentimentModel
 from forecasting.utils import create_time_series_features, aggregate_sentiment_scores
 from forecasting.model import ForecastingModel
-import requests
 
 # Load environment variables
 load_dotenv()
@@ -17,67 +20,10 @@ NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 st.title("Stock Price Forecasting with News Sentiment")
 
 # Sidebar inputs
-if 'ticker' not in st.session_state:
-    st.session_state['ticker'] = 'AAPL'
-if 'news_topic' not in st.session_state:
-    st.session_state['news_topic'] = 'Apple'
-ticker = st.sidebar.text_input("Stock Ticker", value=st.session_state['ticker'], key="main_ticker")
-news_topic = st.sidebar.text_input("News Topic", value=st.session_state['news_topic'], key="main_news_topic")
-from_date = st.sidebar.date_input("From Date", pd.to_datetime("2025-05-14"))
+ticker = st.sidebar.text_input("Stock Ticker", value="AAPL")
+news_topic = st.sidebar.text_input("News Topic", value="Apple")
+from_date = st.sidebar.date_input("From Date", pd.to_datetime("2025-05-12"))
 to_date = st.sidebar.date_input("To Date", pd.to_datetime("2025-06-12"))
-
-# --- Suggested Stock Tickers and News Topics Section ---
-with st.sidebar.expander("💡 Suggested Tickers & News Topics", expanded=False):
-    region = st.radio("Select Ticker Region", ["US", "Indian"], key="ticker_region")
-    us_tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA", "NFLX", "JPM", "V"]
-    india_tickers = ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "BHARTIARTL.NS", "HINDUNILVR.NS", "KOTAKBANK.NS", "LT.NS"]
-    if region == "US":
-        selected_ticker = st.selectbox("Pick a US Ticker", us_tickers, key="us_ticker")
-    else:
-        selected_ticker = st.selectbox("Pick an Indian Ticker", india_tickers, key="in_ticker")
-    st.markdown("**Trending News Topics:**")
-    topics = ["Earnings", "Mergers", "Layoffs", "AI", "Inflation", "Interest Rates", "Dividends", "Buyback", "IPO", "Regulation"]
-    selected_topic = st.selectbox("Pick a News Topic", topics, key="topic")
-    if st.button("Use Suggested Ticker/Topic"):
-        st.session_state['ticker'] = selected_ticker
-        st.session_state['news_topic'] = selected_topic
-        st.success(f"Set ticker to {selected_ticker} and topic to {selected_topic}")
-
-# --- Trending topics section ---
-with st.sidebar.expander("Trending News Topics (last 7 days)"):
-    trending_url = f"https://newsapi.org/v2/top-headlines?language=en&pageSize=100&apiKey={NEWSAPI_KEY}"
-    try:
-        if NEWSAPI_KEY:
-            resp = requests.get(trending_url)
-            if resp.status_code == 200:
-                articles = resp.json().get('articles', [])
-                # Extract words from titles and descriptions, filter out short/generic words
-                all_text = ' '.join([
-                    (a.get('title') or '') + ' ' + (a.get('description') or '')
-                    for a in articles
-                ])
-                # Extract capitalized words (likely topics), min length 3
-                import re
-                words = re.findall(r'\b[A-Z][a-zA-Z]{2,}\b', all_text)
-                # Remove common stopwords and generic words
-                stopwords = set(['The', 'This', 'That', 'With', 'From', 'Will', 'Have', 'Has', 'For', 'And', 'But', 'Are', 'Was', 'You', 'Your', 'More', 'Over', 'After', 'Into', 'Who', 'Why', 'How', 'Out', 'All', 'New', 'Top', 'One', 'Two', 'Day', 'Week', 'Year', 'News', 'Says', 'Said', 'On', 'In', 'At', 'By', 'Of', 'To', 'As', 'It', 'Be', 'Is', 'A', 'An'])
-                topics = pd.Series([w for w in words if w not in stopwords]).value_counts().head(10)
-                if not topics.empty:
-                    st.write("**Top Trending Topics:**")
-                    for topic, count in topics.items():
-                        st.write(f"{topic}: {count} articles")
-                    selected = st.selectbox("Pick a trending topic to use:", topics.index.tolist(), key="trending_topic")
-                    if st.button("Use this topic", key="use_trending_topic"):
-                        st.session_state['news_topic'] = selected
-                        st.success(f"Set news topic to trending topic: {selected}")
-                else:
-                    st.write("No trending topics found in the last 7 days.")
-            else:
-                st.write(f"Could not fetch trending topics. Status code: {resp.status_code}")
-        else:
-            st.write("NEWSAPI_KEY not set.")
-    except Exception as e:
-        st.write(f"Error fetching trending topics: {e}")
 
 if st.sidebar.button("Run Forecast"):
     with st.spinner("Fetching stock data..."):
@@ -87,13 +33,22 @@ if st.sidebar.button("Run Forecast"):
             stock_df.columns = ['_'.join([str(i) for i in col if i]).strip('_') for col in stock_df.columns.values]
         if 'Date' not in stock_df.columns:
             stock_df = stock_df.rename(columns={stock_df.columns[0]: 'Date'})
-        for col in stock_df.columns:
-            if col.endswith(f'_{ticker}'):
-                stock_df = stock_df.rename(columns={col: col.replace(f'_{ticker}', '')})
+        # Robustly remove ticker suffixes (including .NS, .BO, etc.) from all columns except 'Date'
+        import re
+        def strip_suffix(col):
+            if col == 'Date':
+                return col
+            # Remove everything after the first underscore and any trailing dot-suffix (e.g., .NS, .BO)
+            base = col.split('_')[0]
+            base = re.sub(r'\.[A-Z]+$', '', base)
+            return base
+        stock_df.columns = [strip_suffix(col) for col in stock_df.columns]
         stock_df['date'] = pd.to_datetime(stock_df['Date']).dt.strftime('%Y-%m-%d')
 
     with st.spinner("Fetching news headlines and running sentiment analysis..."):
         news_items = fetch_news_headlines(NEWSAPI_KEY, news_topic, str(from_date), str(to_date), with_dates=True)
+        num_headlines = len(news_items) if news_items else 0
+        st.info(f"Fetched {num_headlines} news headlines for topic '{news_topic}' from {from_date} to {to_date}.")
         if news_items:
             headlines, news_dates = zip(*news_items)
         else:
@@ -116,25 +71,27 @@ if st.sidebar.button("Run Forecast"):
         finbert_model = FinBERTSentimentModel()
         analyzer = SentimentAnalyzer(finbert_model)
         scores = analyzer.analyze_sentiment(cleaned)
+        st.info(f"Sample sentiment scores: {scores[:5] if scores else 'None'}")
         sentiment_df = pd.DataFrame({'date': filtered_dates, 'score': scores})
         agg_sentiment = aggregate_sentiment_scores(sentiment_df)
 
     with st.spinner("Merging data and creating features..."):
         merged = pd.merge(stock_df, agg_sentiment, on='date', how='left')
+        # --- Robust date column handling ---
+        if 'date' in merged.columns and 'Date' in merged.columns:
+            merged['Date'] = merged['Date'].combine_first(merged['date'])
+            merged = merged.drop(columns=['date'])
+        elif 'date' in merged.columns:
+            merged = merged.rename(columns={'date': 'Date'})
         # Ensure 'Close' column exists (remove ticker suffix if needed)
         if 'Close' not in merged.columns:
             for col in merged.columns:
                 if col.startswith('Close'):
                     merged = merged.rename(columns={col: 'Close'})
         final_df = create_time_series_features(merged)
-        # --- Robust missing data handling (adaptive) ---
+
+        # --- Robust missing data handling (same as test_modeling.py) ---
         sentiment_cols = [col for col in final_df.columns if 'sentiment' in col.lower() or 'score' in col.lower()]
-        # Merge duplicate date columns into a single 'Date' column for clarity
-        if 'date' in final_df.columns and 'Date' in final_df.columns:
-            final_df['Date'] = final_df['Date'].combine_first(final_df['date'])
-            final_df = final_df.drop(columns=['date'])
-        elif 'date' in final_df.columns:
-            final_df = final_df.rename(columns={'date': 'Date'})
         if len(final_df) < 100:
             for col in sentiment_cols:
                 if col in final_df.columns:
@@ -143,13 +100,13 @@ if st.sidebar.button("Run Forecast"):
         else:
             key_cols = sentiment_cols + [col for col in final_df.columns if col not in sentiment_cols]
             final_df = final_df.dropna(subset=key_cols)
+
         st.subheader("Feature Data Preview")
         st.dataframe(final_df.head())
 
     with st.spinner("Training and evaluating model..."):
         features = [col for col in final_df.columns if col not in ['Date', 'date', 'score', 'Return'] and final_df[col].dtype != 'O']
         target = 'Return'
-        # Only drop rows if essential price features or target are missing
         data = final_df.dropna(subset=features + [target])
         if len(data) < 10:
             st.error("Not enough data for modeling. Try a wider date range or different ticker/topic.")
@@ -186,6 +143,27 @@ if st.sidebar.button("Run Forecast"):
                 st.subheader("Feature Importance")
                 st.bar_chart(feature_importance)
                 st.markdown("**Top features contribute most to the model's predictions.**")
+
+    # --- Trending topics section ---
+    with st.sidebar.expander("Trending News Topics (last 7 days)"):
+        import requests
+        trending_url = f"https://newsapi.org/v2/top-headlines?language=en&pageSize=100&apiKey={NEWSAPI_KEY}"
+        try:
+            resp = requests.get(trending_url)
+            if resp.status_code == 200:
+                articles = resp.json().get('articles', [])
+                topics = pd.Series([a['title'] for a in articles]).str.extractall(r'([A-Z][a-zA-Z]+)')[0].value_counts().head(10)
+                st.write("**Top Trending Topics:**")
+                for topic, count in topics.items():
+                    st.write(f"{topic}: {count} articles")
+                # Add a button to use a trending topic as the news_topic
+                selected = st.selectbox("Pick a trending topic to use:", topics.index.tolist())
+                if st.button("Use this topic"):
+                    st.session_state['news_topic'] = selected
+            else:
+                st.write("Could not fetch trending topics.")
+        except Exception as e:
+            st.write(f"Error fetching trending topics: {e}")
 
     st.success("Done!")
 else:

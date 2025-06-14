@@ -7,6 +7,8 @@ def clean_headlines(headlines):
         # Basic cleaning steps
         cleaned = headline.strip().lower()
         # Optionally, remove stopwords, punctuation, etc. for better results
+        import re
+        cleaned = re.sub(r'[^a-zA-Z0-9\s]', '', cleaned)
         cleaned_headlines.append(cleaned)
     return cleaned_headlines
 
