@@ -1,0 +1,11 @@
+yfinance
+requests
+transformers
+pandas
+numpy
+auto-sklearn
+scikit-learn
+matplotlib
+seaborn
+streamlit
+python-dotenv
