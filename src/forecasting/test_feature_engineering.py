@@ -69,6 +69,21 @@ merged = pd.merge(stock_df, agg_sentiment, on='date', how='left')
 # Create time series features
 final_df = create_time_series_features(merged)
 
+# Handle missing values based on dataset size
+if len(final_df) < 50:
+    # For small datasets, fill missing sentiment as neutral (0)
+    final_df['score'] = final_df['score'].fillna(0)
+    # Optionally, fill other features if needed
+    final_df = final_df.fillna(0)  # Fill other NaNs with 0 for simplicity
+else:
+    # For larger datasets, drop rows with missing key features for higher accuracy
+    features = final_df.columns[final_df.columns.str.startswith('feature_')].tolist()
+    target = 'close'  # Assuming 'close' is the target variable
+    final_df = final_df.dropna(subset=features + [target])
+
+# Drop one of the date columns for clarity
+final_df = final_df.drop(columns=['Date'])
+
 print(f"final_df shape after feature engineering: {final_df.shape}")
 print(final_df.head())
 print(f"\nColumns: {final_df.columns.tolist()}")

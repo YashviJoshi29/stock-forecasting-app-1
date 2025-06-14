@@ -2,6 +2,8 @@ def clean_headlines(headlines):
     # Function to clean news headlines
     cleaned_headlines = []
     for headline in headlines:
+        if headline is None:
+            continue  # Skip None headlines
         # Basic cleaning steps
         cleaned = headline.strip().lower()
         # Optionally, remove stopwords, punctuation, etc. for better results
