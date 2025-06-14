@@ -187,6 +187,42 @@ if st.sidebar.button("Run Forecast"):
                 st.bar_chart(feature_importance)
                 st.markdown("**Top features contribute most to the model's predictions.**")
 
+    # --- Advanced Modeling & Comparison Section ---
+    with st.expander("🔬 Advanced: AutoML, Walk-Forward, Baseline vs Sentiment", expanded=False):
+        st.markdown("""
+        This section compares a baseline (price-only) model to a sentiment-enhanced model using AutoML and walk-forward validation.
+        """)
+        from forecasting.automl_utils import automl_search, walk_forward_validation
+        # Baseline: Only price features
+        price_features = [col for col in final_df.columns if col not in ['Date', 'score', 'sentiment', 'Return'] and final_df[col].dtype != 'O']
+        sentiment_features = price_features + [col for col in final_df.columns if 'score' in col.lower() or 'sentiment' in col.lower()]
+        target = 'Return'
+        data = final_df.dropna(subset=sentiment_features + [target])
+        if len(data) >= 30:
+            X_price = data[price_features]
+            X_sent = data[sentiment_features]
+            y = data[target]
+            st.write("**AutoML: Searching for best baseline (price-only) model...")
+            base_name, base_model, base_params, base_score = automl_search(X_price, y)
+            st.write(f"Best Baseline Model: {base_name} {base_params}, MSE: {base_score:.4f}")
+            st.write("**AutoML: Searching for best sentiment-enhanced model...")
+            sent_name, sent_model, sent_params, sent_score = automl_search(X_sent, y)
+            st.write(f"Best Sentiment Model: {sent_name} {sent_params}, MSE: {sent_score:.4f}")
+            st.write("**Walk-forward validation (sentiment model):**")
+            preds, actuals, mse, r2 = walk_forward_validation(sent_model, X_sent, y, window=20)
+            st.write(f"Walk-forward MSE: {mse:.4f}, R²: {r2:.4f}")
+            st.line_chart(pd.DataFrame({'Actual': actuals, 'Predicted': preds}))
+            # Feature importance for sentiment model
+            if hasattr(sent_model, 'feature_importances_'):
+                importances = sent_model.feature_importances_
+                feature_importance = pd.Series(importances, index=X_sent.columns).sort_values(ascending=False)
+                st.subheader("Feature Importance (Sentiment Model)")
+                st.bar_chart(feature_importance)
+                st.markdown("**Top features contribute most to the model's predictions.**")
+            # Baseline vs Sentiment comparison
+            st.write(f"**Improvement from sentiment features:** Baseline MSE: {base_score:.4f} → Sentiment MSE: {sent_score:.4f}")
+        else:
+            st.info("Not enough data for advanced comparison (need at least 30 rows after NA handling). Try a wider date range.")
     st.success("Done!")
 else:
     st.info("Set your parameters and click 'Run Forecast' to begin.")
